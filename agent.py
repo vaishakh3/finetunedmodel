@@ -1,19 +1,18 @@
 import json
 import re
 import inflect
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from google import genai
 from google.genai import types
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def convert_chat_history(chat_history, system_prompt=None):
     gemini_messages = []
 
     if system_prompt:
-        gemini_messages.append({
-            "role": "user",
-            "parts": [{"text": system_prompt}]
-        })
+        gemini_messages.append(
+            types.Content(role="user", parts=[types.Part(text=system_prompt)])
+        )
 
     for msg in chat_history:
         if isinstance(msg, SystemMessage):
@@ -22,10 +21,9 @@ def convert_chat_history(chat_history, system_prompt=None):
         role = "user" if isinstance(msg, HumanMessage) else "model"
 
         if isinstance(msg.content, str):
-            gemini_messages.append({
-                "role": role,
-                "parts": [{"text": msg.content}]
-            })
+            gemini_messages.append(
+                types.Content(role=role, parts=[types.Part(text=msg.content)])
+            )
 
     return gemini_messages
 
@@ -35,18 +33,19 @@ class Agent:
         self.system_prompt = system_prompt
         self.latest_emotions = []
 
+        # Auth automatically picks up ADC
         self.client = genai.Client(
             vertexai=True,
             project="965267089646",
             location="us-central1",
         )
 
-        self.model = "projects/965267089646/locations/us-central1/endpoints/3860118143795986432"
+        self.model_name = "projects/965267089646/locations/us-central1/endpoints/3860118143795986432"
 
-        self.generate_config = types.GenerateContentConfig(
-            temperature=1,
+        self.generation_config = types.GenerateContentConfig(
+            temperature=0.9,
             top_p=0.95,
-            max_output_tokens=8192,
+            max_output_tokens=1024,
             response_modalities=["TEXT"],
             safety_settings=[
                 types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
@@ -87,7 +86,6 @@ class Agent:
                 chat_history.append(AIMessage(content=contextualized_utterance))
 
         self.latest_emotions = list(set(all_emotions))
-
         return [last_user_message, chat_history]
 
     def get_responses(self, message: str, chat_history=None) -> list[str]:
@@ -114,13 +112,12 @@ Keep your tone human-like and compassionate.
 
         output = ""
         for chunk in self.client.models.generate_content_stream(
-            model=self.model,
+            model=self.model_name,
             contents=input_messages,
-            config=self.generate_config,
+            config=self.generation_config,
         ):
             output += chunk.text
 
-        # Remove unwanted "911..." phrases if they sneak in
         output = re.sub(r"(?i)^911[, ]+what'?s your emergency[\?]?[ ]*", "", output).strip()
 
         numbers = re.findall(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b", output)
@@ -135,8 +132,3 @@ Keep your tone human-like and compassionate.
     def number_to_words(self, number: str) -> str:
         p = inflect.engine()
         return p.number_to_words(number)
-
-
-if __name__ == "__main__":
-    agent = Agent(system_prompt="You are a helpful and empathetic emergency response assistant.")
-    print("\n".join(agent.get_responses("There’s a fire in the kitchen!")))
